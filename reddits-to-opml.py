@@ -27,12 +27,19 @@
 #   python reddits-to-opml --user=<username> --password=<password>
 #
 # History:
+#   2010-08-09 Ryan Aghdam <ryan@ryanaghdam.com>
+#     Rewrite
+#
 #   2010-08-08 Ryan Aghdam <ryan@ryanaghdam.com>
 #     Initial version
 
-import urllib
 import urllib2
+import urllib
 
+# Apparently ElementTree can exist in different locations depending on the
+# version of Python.
+#
+# http://google-app-engine-samples.googlecode.com/svn-history/r97/trunk/muvmuv/main.py
 try:
   from xml.etree.cElementTree import *
 except ImportError:
@@ -41,26 +48,68 @@ except ImportError:
   except ImportError:
     from elementtree.ElementTree import *
 
+import argparse
+
+# Constants
 REDDITS_URL = 'http://www.reddit.com/reddits/mine/.xml'
 LOGIN_URL = 'http://www.reddit.com/api/login'
-AUTH_INFO = urllib.urlencode(dict(user='raghdam', passwd='secret'))
+PROGRAM_DESCRIPTION = "Prints an OPML Feed for a user's subscribed Reddits"
+PROGRAM_USAGE = "%(prog)s USERNAME PASSWORD"
 
-opener = urllib2.build_opener(urllib2.HTTPCookieProcessor())
-urllib2.install_opener(opener)
+def fetch_subscriptions(credentials):
+  """ Given URL Encoded account credentials, return a RSS Feed
+  containing the the user's subscriptions """
+  
+  # Create a URLOpener, with Cookie support
+  opener = urllib2.build_opener(urllib2.HTTPCookieProcessor())
+  urllib2.install_opener(opener)
 
-opener.open(LOGIN_URL, AUTH_INFO)
-reddits = parse(opener.open(REDDITS_URL))
+  # Send credentials; a cookie is stored if successful.
+  opener.open(LOGIN_URL, credentials)
 
-root = Element("opml")
-root.set("version", "1.0")
+  # Return Subscription RSS Feed
+  return opener.open(REDDITS_URL)
 
-body = SubElement(root, "body")
+def encode_credentials(user, passwd):
+  """ URL Encode the given username and password """
+  return urllib.urlencode(dict(user=user, passwd=passwd))
 
-for reddit in reddits.findall('channel/item'):
-  feed = SubElement(body, "outline")
-  feed.set("text", reddit.findtext('title'))
-  feed.set("type", "rss")
-  feed.set("xmlUrl", "http://www.reddit.com%s" % (reddit.findtext('link')))
+def parse_subscription_feed(feed):
+  reddits = []
+  for subscription in parse(feed).findall('channel/item'):
+    reddits.append({
+        'text': subscription.findtext('title'),
+        'xmlUrl': "http://www.reddit.com%s" % (subscription.findtext('link'))
+      })
+  return reddits
 
-print tostring(root)
+def create_opml_feed(reddits=[]):
+  # Root element of OPML feed
+  opml_root = Element("opml")
+  opml_root.set("version", "1.0")
 
+  # Create a body Element
+  body = SubElement(opml_root, "body")
+
+  # Add each reddit to feed
+  for reddit in reddits:
+    outline = SubElement(body, "outline")
+    outline.set("type", "rss")
+    outline.set("text", reddit["text"])
+    outline.set("xmlUrl", reddit["xmlUrl"])
+
+  # Return the feed
+  return opml_root
+
+def main(argv):
+  print prettyprint(create_opml_feed(parse_subscription_feed(fetch_subscriptions(encode_credentials(argv.user,
+    argv.passwd)))))
+
+
+
+if __name__ == '__main__':
+  parser = argparse.ArgumentParser(description=PROGRAM_DESCRIPTION,
+      usage=PROGRAM_USAGE)
+  parser.add_argument('-u', '--user', required=True, help="Reddit Username")
+  parser.add_argument('-p', '--passwd', required=True, help="Reddit Password")
+  main(parser.parse_args())
